@@ -1,0 +1,29 @@
+# Logs
+*.log
+logs/
+
+# Datos locales
+data/
+
+# Variables de entorno locales
+.env
+.env.local
+.env.production
+
+# Docker
+.dockerignore
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Backups
+*.backup
+*.dump
+*.sql.gz
