@@ -92,3 +92,75 @@ INSERT INTO user_activity (user_id, page_views, session_duration, actions_count,
 -- Crear algunos índices útiles
 CREATE INDEX IF NOT EXISTS idx_event_user ON event_logs (user_id) TYPE minmax GRANULARITY 1;
 CREATE INDEX IF NOT EXISTS idx_event_status ON event_logs (status_code) TYPE set(100) GRANULARITY 1;
+
+-- ============================================
+-- TABLAS RAW (Staging Layer) - ADT_MS
+-- ============================================
+
+-- Tabla RAW para eventos de actividad
+CREATE TABLE IF NOT EXISTS events_raw (
+    event_id String,
+    contractor_id String,
+    agent_id Nullable(String),
+    session_id Nullable(String),
+    agent_session_id Nullable(String),
+    timestamp DateTime,
+    payload String,  -- JSON string
+    created_at DateTime DEFAULT now()
+) ENGINE = MergeTree()
+PARTITION BY toDate(timestamp)
+ORDER BY (contractor_id, timestamp, event_id)
+TTL timestamp + INTERVAL 365 DAY;
+
+-- Tabla RAW para sesiones de contractors
+-- Usa ReplacingMergeTree para manejar actualizaciones (cuando se cierra una sesión)
+-- ClickHouse deduplicará automáticamente basándose en updated_at (mantiene la versión más reciente)
+CREATE TABLE IF NOT EXISTS sessions_raw (
+    session_id String,
+    contractor_id String,
+    session_start DateTime,
+    session_end Nullable(DateTime),
+    total_duration Nullable(UInt32),  -- en segundos
+    created_at DateTime DEFAULT now(),
+    updated_at DateTime DEFAULT now()
+) ENGINE = ReplacingMergeTree(updated_at)
+PARTITION BY toDate(session_start)
+ORDER BY (session_id, contractor_id, session_start)
+TTL session_start + INTERVAL 365 DAY;
+
+-- Tabla RAW para sesiones de agentes
+-- Usa ReplacingMergeTree para manejar actualizaciones (cuando se cierra una sesión)
+-- ClickHouse deduplicará automáticamente basándose en updated_at (mantiene la versión más reciente)
+CREATE TABLE IF NOT EXISTS agent_sessions_raw (
+    agent_session_id String,
+    contractor_id String,
+    agent_id String,
+    session_id Nullable(String),
+    session_start DateTime,
+    session_end Nullable(DateTime),
+    total_duration Nullable(UInt32),  -- en segundos
+    created_at DateTime DEFAULT now(),
+    updated_at DateTime DEFAULT now()
+) ENGINE = ReplacingMergeTree(updated_at)
+PARTITION BY toDate(session_start)
+ORDER BY (agent_session_id, contractor_id, agent_id, session_start)
+TTL session_start + INTERVAL 365 DAY;
+
+-- Tabla RAW para información de contractors
+-- Usa ReplacingMergeTree para manejar actualizaciones
+CREATE TABLE IF NOT EXISTS contractor_info_raw (
+    contractor_id String,
+    name String,
+    email Nullable(String),
+    job_position String,
+    work_schedule_start Nullable(String),
+    work_schedule_end Nullable(String),
+    country Nullable(String),
+    client_id String,
+    team_id Nullable(String),
+    created_at DateTime,
+    updated_at DateTime
+) ENGINE = ReplacingMergeTree(updated_at)
+PARTITION BY toYYYYMM(created_at)
+ORDER BY (contractor_id, created_at)
+TTL created_at + INTERVAL 730 DAY;  -- 2 años de retención
