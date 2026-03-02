@@ -1,14 +1,34 @@
 services:
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--api.insecure=false"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.clickhouse-tcp.address=:9000"
+      # Opcional: Configuración de certificados Let's Encrypt o TLS interno aquí
+    ports:
+      - "443:443"
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - app-network
+
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     container_name: clickhouse-server
     hostname: clickhouse-server
-    ports:
-      - "8123:8123" # HTTP interface
-      - "9000:9000" # Native TCP interface
+    restart: unless-stopped
     volumes:
+      # CRÍTICO: Este volumen debe estar respaldado por un disco EBS gp3 o io2
       - clickhouse_data:/var/lib/clickhouse
       - ./init:/docker-entrypoint-initdb.d:ro
+      # En producción, considera montar config.xml y users.xml
+      # - ./config/config.xml:/etc/clickhouse-server/config.d/custom.xml:ro
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-andes_db}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-admin}
@@ -18,7 +38,6 @@ services:
       nofile:
         soft: 262144
         hard: 262144
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 30s
@@ -26,12 +45,28 @@ services:
       retries: 5
       start_period: 60s
     networks:
-      - clickhouse-network
+      - app-network
+    labels:
+      - "traefik.enable=true"
+      
+      # --- Configuración HTTP (Puerto 8123) ---
+      - "traefik.http.routers.ch-http.rule=Host(`clickhouse.internal.tudominio.com`)"
+      - "traefik.http.routers.ch-http.entrypoints=websecure"
+      - "traefik.http.services.ch-http.loadbalancer.server.port=8123"
+      # Activa TLS si Traefik gestiona certificados
+      # - "traefik.http.routers.ch-http.tls=true" 
+
+      # --- Configuración TCP Nativo (Puerto 9000) ---
+      # Nota: Traefik requiere HostSNI(`*`) para TCP si no usas TLS. 
+      # Si la red de AWS ya es privada y segura, esto es aceptable.
+      - "traefik.tcp.routers.ch-tcp.rule=HostSNI(`*`)"
+      - "traefik.tcp.routers.ch-tcp.entrypoints=clickhouse-tcp"
+      - "traefik.tcp.services.ch-tcp.loadbalancer.server.port=9000"
 
 volumes:
   clickhouse_data:
     driver: local
 
 networks:
-  clickhouse-network:
+  app-network:
     driver: bridge
